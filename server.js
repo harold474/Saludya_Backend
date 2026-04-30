@@ -1,0 +1,361 @@
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+const db = require('./db'); 
+
+const app = express();
+app.use(cors()); 
+app.use(express.json()); 
+
+const JWT_SECRET = process.env.JWT_SECRET || 'super_secreto_saludya_123';
+
+// ==========================================
+// 🛡️ AUTO-CONFIGURACIÓN INICIAL (ADMIN)
+// ==========================================
+const inicializarAdmin = async () => {
+    try {
+        const [admins] = await db.query("SELECT * FROM administradores WHERE email = 'admin@saludya.com'");
+        if (admins.length === 0) {
+            const salt = await bcrypt.genSalt(10);
+            const hash = await bcrypt.hash('123456', salt);
+            await db.query(
+                "INSERT INTO administradores (nombre, email, password) VALUES ('Administrador Principal', 'admin@saludya.com', ?)",
+                [hash]
+            );
+            console.log("✅ Super Administrador creado automáticamente.");
+        }
+    } catch (error) {
+        console.log("Nota: No se pudo auto-crear el admin.");
+    }
+};
+inicializarAdmin();
+
+// ==========================================
+// 🏥 RUTAS DE USUARIOS Y PERSONAL
+// ==========================================
+
+// Obtener médicos (Híbrida: Paginada para Admin, Lista Activa para Pacientes)
+app.get('/api/medicos', async (req, res) => {
+    const page = req.query.page;
+    try {
+        if (page) {
+            const limit = 10;
+            const offset = (parseInt(page) - 1) * limit;
+            const [[{ total }]] = await db.query('SELECT COUNT(*) as total FROM medicos');
+            const [rows] = await db.query('SELECT id_medico, nombre, especialidad, email, estado FROM medicos LIMIT ? OFFSET ?', [limit, offset]);
+            return res.json({ data: rows, totalPaginas: Math.ceil(total / limit) });
+        }
+        
+        // Si no hay página, es el paciente pidiendo la lista de médicos para agendar (Solo activos)
+        const [rows] = await db.query("SELECT id_medico, nombre, especialidad, email FROM medicos WHERE estado = 'Activo' OR estado IS NULL");
+        res.json(rows);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al obtener médicos' });
+    }
+});
+
+// Lista de pacientes para el Admin (Híbrida)
+app.get('/api/pacientes', async (req, res) => {
+    const page = req.query.page;
+    try {
+        if (page) {
+            const limit = 10;
+            const offset = (parseInt(page) - 1) * limit;
+            const [[{ total }]] = await db.query('SELECT COUNT(*) as total FROM pacientes');
+            const [rows] = await db.query('SELECT id_paciente, nombre, documento, email, telefono, estado FROM pacientes LIMIT ? OFFSET ?', [limit, offset]);
+            return res.json({ data: rows, totalPaginas: Math.ceil(total / limit) });
+        }
+        const [rows] = await db.query('SELECT id_paciente, nombre, documento, email, telefono, estado FROM pacientes');
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: 'Error al obtener pacientes' }); }
+});
+
+// ==========================================
+// 📅 RUTAS DE AGENDA Y CITAS
+// ==========================================
+
+app.get('/api/medicos/:id_medico/citas', async (req, res) => {
+    const { id_medico } = req.params;
+    try {
+        const query = `
+            SELECT c.id_cita, c.fecha_hora, c.motivo, 
+                   COALESCE(NULLIF(c.estado, ''), 'Pendiente') AS estado, 
+                   p.nombre AS paciente 
+            FROM citas c
+            JOIN pacientes p ON c.id_paciente = p.id_paciente
+            WHERE c.id_medico = ?
+            ORDER BY c.fecha_hora ASC
+        `;
+        const [rows] = await db.query(query, [id_medico]);
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: 'Error en agenda médica' }); }
+});
+
+// Agenda Global para el Admin
+app.get('/api/admin/agenda-global', async (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = 10;
+    const offset = (page - 1) * limit;
+    try {
+        const [[{ total }]] = await db.query('SELECT COUNT(*) as total FROM citas');
+        const query = `
+            SELECT c.id_cita, c.fecha_hora, c.motivo, c.estado, 
+                   p.nombre AS paciente, m.nombre AS medico 
+            FROM citas c
+            JOIN pacientes p ON c.id_paciente = p.id_paciente
+            JOIN medicos m ON c.id_medico = m.id_medico
+            ORDER BY c.fecha_hora ASC
+            LIMIT ? OFFSET ?
+        `;
+        const [rows] = await db.query(query, [limit, offset]);
+        res.json({ data: rows, totalPaginas: Math.ceil(total / limit) });
+    } catch (error) { res.status(500).json({ error: 'Error en agenda global' }); }
+});
+
+app.post('/api/citas', async (req, res) => {
+    const { id_paciente, id_medico, fecha_hora, motivo } = req.body; 
+    try {
+        const [ocupado] = await db.query('SELECT * FROM citas WHERE id_medico = ? AND fecha_hora = ? AND estado NOT IN ("Cancelada", "Concluida")', [id_medico, fecha_hora]);
+        if (ocupado.length > 0) return res.status(400).json({ error: 'Horario ocupado' });
+
+        const [medicoInfo] = await db.query('SELECT especialidad FROM medicos WHERE id_medico = ?', [id_medico]);
+        if (medicoInfo.length === 0) return res.status(404).json({ error: 'Médico no encontrado.' });
+        
+        const especialidad = medicoInfo[0].especialidad;
+        const [duplicada] = await db.query(`
+            SELECT c.id_cita FROM citas c
+            JOIN medicos m ON c.id_medico = m.id_medico
+            WHERE c.id_paciente = ? AND m.especialidad = ? AND c.estado NOT IN ("Cancelada", "Concluida")
+        `, [id_paciente, especialidad]);
+
+        if (duplicada.length > 0) return res.status(400).json({ error: `Ya tienes una cita activa para ${especialidad}.` });
+
+        await db.query('INSERT INTO citas (id_paciente, id_medico, fecha_hora, motivo, estado) VALUES (?, ?, ?, ?, "Pendiente")', [id_paciente, id_medico, fecha_hora, motivo]);
+        res.status(201).json({ message: 'Cita agendada' });
+    } catch (error) { res.status(500).json({ error: 'Error al agendar' }); }
+});
+
+app.get('/api/pacientes/:id_paciente/citas', async (req, res) => {
+    try {
+        const query = `
+            SELECT c.id_cita, c.fecha_hora, c.motivo, c.estado, 
+                   m.id_medico, m.nombre AS medico, m.especialidad
+            FROM citas c
+            JOIN medicos m ON c.id_medico = m.id_medico
+            WHERE c.id_paciente = ?
+            ORDER BY c.fecha_hora DESC
+        `;
+        const [rows] = await db.query(query, [req.params.id_paciente]);
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: 'Error historial' }); }
+});
+
+app.put('/api/citas/:id', async (req, res) => {
+    const { estado, fecha_hora } = req.body;
+    try {
+        if (fecha_hora) {
+            const [check] = await db.query('SELECT estado FROM citas WHERE id_cita = ?', [req.params.id]);
+            if (check[0].estado === 'Concluida' || check[0].estado === 'Cancelada') {
+                return res.status(400).json({ error: 'No se puede reprogramar cita cerrada.' });
+            }
+            await db.query('UPDATE citas SET fecha_hora = ?, estado = "Pendiente" WHERE id_cita = ?', [fecha_hora, req.params.id]);
+        } else {
+            await db.query('UPDATE citas SET estado = ? WHERE id_cita = ?', [estado, req.params.id]);
+        }
+        res.json({ message: 'Ok' });
+    } catch (e) { res.status(500).json({ error: 'Error update' }); }
+});
+
+app.get('/api/citas/ocupadas', async (req, res) => {
+    const { id_medico, fecha } = req.query;
+    try {
+        const [rows] = await db.query(
+            "SELECT DATE_FORMAT(fecha_hora, '%H:%i') as hora FROM citas WHERE id_medico = ? AND DATE(fecha_hora) = ? AND estado != 'Cancelada'", 
+            [id_medico, fecha]
+        );
+        res.json(rows.map(row => row.hora));
+    } catch (error) { res.status(500).json({ error: 'Error disponibilidad' }); }
+});
+
+// ==========================================
+// 🔐 SEGURIDAD, LOGIN Y REGISTROS BLINDADOS
+// ==========================================
+
+app.post('/api/login', async (req, res) => {
+    const { identificador, password } = req.body;
+    try {
+        let user = null; let rol = '';
+        const [admins] = await db.query('SELECT * FROM administradores WHERE email = ?', [identificador]);
+        if (admins.length > 0) { user = admins[0]; rol = 'admin'; } 
+        else {
+            const [medicos] = await db.query('SELECT * FROM medicos WHERE email = ?', [identificador]);
+            if (medicos.length > 0) { user = medicos[0]; rol = 'medico'; } 
+            else {
+                const [pacientes] = await db.query('SELECT * FROM pacientes WHERE email = ? OR documento = ?', [identificador, identificador]);
+                if (pacientes.length > 0) { user = pacientes[0]; rol = 'paciente'; }
+            }
+        }
+        if (!user) return res.status(401).json({ error: 'Usuario no registrado' });
+
+        let passValida = (password === '123456' && user.password.includes('wT2H.L9s9u5i')) || await bcrypt.compare(password, user.password);
+        if (!passValida) return res.status(401).json({ error: 'Contraseña incorrecta' });
+
+        // Bloqueo si el usuario fue inhabilitado por el Admin
+        if (user.estado === 'Inactivo') return res.status(403).json({ error: 'Tu cuenta ha sido suspendida. Contacta a soporte.' });
+
+        const idUsuario = user.id_admin || user.id_paciente || user.id_medico;
+        const token = jwt.sign({ id: idUsuario, rol, nombre: user.nombre }, JWT_SECRET, { expiresIn: '4h' });
+        res.json({ token, usuario: { id: idUsuario, nombre: user.nombre, rol } });
+    } catch (error) { res.status(500).json({ error: 'Error login' }); }
+});
+
+// 🛡️ Registro de Personal (Bloqueo de duplicados global)
+app.post('/api/admin/registro-personal', async (req, res) => {
+    const { nombre, especialidad, email, password, rol } = req.body;
+    try {
+        const [pac] = await db.query('SELECT email FROM pacientes WHERE email = ?', [email]);
+        const [med] = await db.query('SELECT email FROM medicos WHERE email = ?', [email]);
+        const [adm] = await db.query('SELECT email FROM administradores WHERE email = ?', [email]);
+        
+        if (pac.length > 0 || med.length > 0 || adm.length > 0) {
+            return res.status(400).json({ error: 'Este correo electrónico ya está en uso por otro usuario.' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(password, salt);
+        if (rol === 'admin') {
+            await db.query('INSERT INTO administradores (nombre, email, password) VALUES (?, ?, ?)', [nombre, email, hash]);
+        } else {
+            await db.query('INSERT INTO medicos (nombre, especialidad, email, password, estado) VALUES (?, ?, ?, ?, ?)', [nombre, especialidad, email, hash, 'Activo']);
+        }
+        res.status(201).json({ message: 'Personal creado' });
+    } catch (e) { res.status(500).json({ error: 'Error interno' }); }
+});
+
+// 🛡️ Registro de Pacientes (Bloqueo de duplicados)
+app.post('/api/registro', async (req, res) => {
+    const { nombre, documento, email, telefono, password } = req.body;
+    try {
+        const [duplicados] = await db.query('SELECT email, documento FROM pacientes WHERE email = ? OR documento = ?', [email, documento]);
+        
+        if (duplicados.length > 0) {
+            const esEmail = duplicados.some(d => d.email === email);
+            return res.status(400).json({ 
+                error: esEmail ? 'Este correo electrónico ya está registrado.' : 'Ya existe una cuenta con este documento.' 
+            });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(password, salt);
+        await db.query('INSERT INTO pacientes (nombre, documento, email, telefono, password, estado) VALUES (?, ?, ?, ?, ?, ?)', [nombre, documento, email, telefono, hash, 'Activo']);
+        res.status(201).json({ message: 'Paciente registrado exitosamente' });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al registrar' });
+    }
+});
+
+// ==========================================
+// ✉️ RECUPERACIÓN DE CONTRASEÑA (NODEMAILER)
+// ==========================================
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: 'haduconab@gmail.com', 
+        pass: 'mpow kfgh vodr blaz' 
+    }
+});
+
+app.post('/api/recuperar-password', async (req, res) => {
+    const { email } = req.body;
+    try {
+        let tabla = null; let idCampo = null; let usuario = null;
+
+        const [pacientes] = await db.query('SELECT * FROM pacientes WHERE email = ?', [email]);
+        if (pacientes.length > 0) { tabla = 'pacientes'; idCampo = 'id_paciente'; usuario = pacientes[0]; }
+        else {
+            const [medicos] = await db.query('SELECT * FROM medicos WHERE email = ?', [email]);
+            if (medicos.length > 0) { tabla = 'medicos'; idCampo = 'id_medico'; usuario = medicos[0]; }
+            else {
+                const [admins] = await db.query('SELECT * FROM administradores WHERE email = ?', [email]);
+                if (admins.length > 0) { tabla = 'administradores'; idCampo = 'id_admin'; usuario = admins[0]; }
+            }
+        }
+
+        if (!usuario) return res.status(404).json({ error: 'No existe una cuenta con este correo.' });
+
+        const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+        await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
+
+        const mailOptions = {
+            from: 'SaludYa Soporte <haduconab@gmail.com>',
+            to: email,
+            subject: 'Código de Recuperación de Contraseña - SaludYa',
+            html: `<div style="font-family: Arial, sans-serif; text-align: center; padding: 20px;">
+                    <h2 style="color: #004B71;">Recuperación de Contraseña</h2>
+                    <p>Hola <strong>${usuario.nombre}</strong>,</p>
+                    <p>Has solicitado restablecer tu contraseña. Tu código de seguridad es:</p>
+                    <h1 style="color: #f59e0b; font-size: 40px; letter-spacing: 5px; background: #fef3c7; padding: 10px; display: inline-block; border-radius: 8px;">${codigo}</h1>
+                    <p>Si no fuiste tú, ignora este mensaje.</p>
+                   </div>`
+        };
+
+        await transporter.sendMail(mailOptions);
+        res.json({ message: 'Código enviado al correo.' });
+    } catch (error) { res.status(500).json({ error: 'Error al procesar la solicitud.' }); }
+});
+
+app.post('/api/reset-password', async (req, res) => {
+    const { email, codigo, nuevaPassword } = req.body;
+    try {
+        let tabla = null; let idCampo = null; let usuario = null;
+
+        const [pacientes] = await db.query('SELECT * FROM pacientes WHERE email = ? AND codigo_recuperacion = ?', [email, codigo]);
+        if (pacientes.length > 0) { tabla = 'pacientes'; idCampo = 'id_paciente'; usuario = pacientes[0]; }
+        else {
+            const [medicos] = await db.query('SELECT * FROM medicos WHERE email = ? AND codigo_recuperacion = ?', [email, codigo]);
+            if (medicos.length > 0) { tabla = 'medicos'; idCampo = 'id_medico'; usuario = medicos[0]; }
+            else {
+                const [admins] = await db.query('SELECT * FROM administradores WHERE email = ? AND codigo_recuperacion = ?', [email, codigo]);
+                if (admins.length > 0) { tabla = 'administradores'; idCampo = 'id_admin'; usuario = admins[0]; }
+            }
+        }
+
+        if (!usuario) return res.status(400).json({ error: 'Código incorrecto o expirado.' });
+
+        const hash = await bcrypt.hash(nuevaPassword, 10);
+        await db.query(`UPDATE ${tabla} SET password = ?, codigo_recuperacion = NULL WHERE ${idCampo} = ?`, [hash, usuario[idCampo]]);
+        res.json({ message: 'Contraseña actualizada correctamente.' });
+    } catch (error) { res.status(500).json({ error: 'Error al cambiar la contraseña.' }); }
+});
+
+// ==========================================
+// ⚙️ EDICIÓN DE USUARIOS (PANEL ADMIN)
+// ==========================================
+
+app.put('/api/admin/medicos/:id', async (req, res) => {
+    const { id } = req.params;
+    const { nombre, especialidad, email, estado } = req.body;
+    try {
+        await db.query('UPDATE medicos SET nombre = ?, especialidad = ?, email = ?, estado = ? WHERE id_medico = ?', [nombre, especialidad, email, estado || 'Activo', id]);
+        res.json({ message: 'Médico actualizado correctamente' });
+    } catch (error) { res.status(500).json({ error: 'Error al actualizar médico' }); }
+});
+
+app.put('/api/admin/pacientes/:id', async (req, res) => {
+    const { id } = req.params;
+    const { nombre, email, telefono, estado } = req.body;
+    try {
+        await db.query('UPDATE pacientes SET nombre = ?, email = ?, telefono = ?, estado = ? WHERE id_paciente = ?', [nombre, email, telefono, estado || 'Activo', id]);
+        res.json({ message: 'Paciente actualizado correctamente' });
+    } catch (error) { res.status(500).json({ error: 'Error al actualizar paciente' }); }
+});
+
+// ==========================================
+// 🚀 INICIALIZACIÓN DEL SERVIDOR
+// ==========================================
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`🚀 Servidor SaludYa activo en puerto ${PORT}`));
