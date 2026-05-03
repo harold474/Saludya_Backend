@@ -5,12 +5,7 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const db = require('./db'); 
 
-// === CONFIGURACIÓN DE BREVO (ESTABLE) ===
-const { TransactionalEmailsApi, ApiClient, SendSmtpEmail } = require('@getbrevo/brevo');
-const defaultClient = ApiClient.instance;
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY; // Se usa la variable de entorno para evitar bloqueos de GitHub
-const apiInstance = new TransactionalEmailsApi();
+// 🚨 BORRAMOS LA LIBRERÍA DE BREVO DE AQUÍ PARA EVITAR EL ERROR DE NODE 24 🚨
 
 console.log("Intentando conectar al host:", process.env.DB_HOST);
 
@@ -302,7 +297,7 @@ app.post('/api/registro', async (req, res) => {
 });
 
 // ==========================================
-// ✉️ RECUPERACIÓN DE CONTRASEÑA (BREVO API)
+// ✉️ RECUPERACIÓN DE CONTRASEÑA (BREVO REST API)
 // ==========================================
 
 app.post('/api/recuperar-password', async (req, res) => {
@@ -336,28 +331,43 @@ app.post('/api/recuperar-password', async (req, res) => {
         await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
         console.log("✅ Código guardado exitosamente en la BD.");
 
-        console.log("Paso 4: Enviando correo vía Brevo API...");
+        console.log("Paso 4: Enviando correo vía Brevo REST API nativa...");
         
-        const sendSmtpEmail = new SendSmtpEmail(); 
-        
-        sendSmtpEmail.subject = "Código de Recuperación - SaludYa";
-        sendSmtpEmail.htmlContent = `
-            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #ddd; border-radius: 10px; max-width: 500px; margin: auto;">
-                <h2 style="color: #004B71; text-align: center;">Recuperación de Contraseña</h2>
-                <p>Hola,</p>
-                <p>Tu código de seguridad para acceder a <strong>SaludYa</strong> es:</p>
-                <div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #004B71; border-radius: 5px; margin: 20px 0;">
-                    ${codigo}
-                </div>
-                <p style="font-size: 12px; color: #777; text-align: center;">Si no solicitaste este cambio, ignora este correo.</p>
-            </div>`;
-        
-        sendSmtpEmail.sender = { "name": "SaludYa Soporte", "email": "luchinbackup@gmail.com" };
-        sendSmtpEmail.to = [{ "email": email }];
+        // --- INICIO DE CONEXIÓN DIRECTA A BREVO ---
+        const brevoPayload = {
+            sender: { name: "SaludYa Soporte", email: "luchinbackup@gmail.com" },
+            to: [{ email: email }],
+            subject: "Código de Recuperación - SaludYa",
+            htmlContent: `
+                <div style="font-family: sans-serif; padding: 20px; border: 1px solid #ddd; border-radius: 10px; max-width: 500px; margin: auto;">
+                    <h2 style="color: #004B71; text-align: center;">Recuperación de Contraseña</h2>
+                    <p>Hola,</p>
+                    <p>Tu código de seguridad para acceder a <strong>SaludYa</strong> es:</p>
+                    <div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #004B71; border-radius: 5px; margin: 20px 0;">
+                        ${codigo}
+                    </div>
+                    <p style="font-size: 12px; color: #777; text-align: center;">Si no solicitaste este cambio, ignora este correo.</p>
+                </div>`
+        };
 
-        await apiInstance.sendTransacEmail(sendSmtpEmail);
+        // Usamos el fetch nativo de Node.js v24 (No falla nunca)
+        const brevoResponse = await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: {
+                'accept': 'application/json',
+                'api-key': process.env.BREVO_API_KEY,
+                'content-type': 'application/json'
+            },
+            body: JSON.stringify(brevoPayload)
+        });
 
-        console.log("✅ Correo enviado con éxito vía Brevo a:", email);
+        if (!brevoResponse.ok) {
+            const errorDetails = await brevoResponse.text();
+            throw new Error(`Fallo en Brevo: ${errorDetails}`);
+        }
+        // --- FIN DE CONEXIÓN A BREVO ---
+
+        console.log("✅ Correo enviado con éxito vía Fetch a:", email);
         res.json({ message: 'Código enviado al correo.' });
 
     } catch (error) { 
