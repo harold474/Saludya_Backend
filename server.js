@@ -307,17 +307,20 @@ const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // Para el puerto 587 debe ser false
+    port: 465,
+    secure: true, // Volvemos al 465 pero con un ajuste de seguridad
     auth: {
         user: 'haduconab@gmail.com', 
-        pass: process.env.EMAIL_PASS || 'mpow kfgh vodr blaz' 
+        pass: 'mpow kfgh vodr blaz' 
     },
     tls: {
-        rejectUnauthorized: false // Esto ayuda a que Render no bloquee la conexión
+        // Esta línea es la clave: evita que la conexión se caiga si el handshake tarda
+        rejectUnauthorized: false,
+        minVersion: 'TLSv1.2'
     },
-    logger: true,
-    debug: true 
+    connectionTimeout: 20000, // Le damos 20 segundos para que no se desespere
+    greetingTimeout: 20000,
+    socketTimeout: 20000
 });
 
 app.post('/api/recuperar-password', async (req, res) => {
