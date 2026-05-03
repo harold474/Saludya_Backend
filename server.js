@@ -315,9 +315,13 @@ const transporter = nodemailer.createTransport({
 
 app.post('/api/recuperar-password', async (req, res) => {
     const { email } = req.body;
+    console.log("--- SOLICITUD DE RECUPERACIÓN ---");
+    console.log("Email recibido:", email);
+
     try {
         let tabla = null; let idCampo = null; let usuario = null;
 
+        // 1. Buscar en todas las tablas
         const [pacientes] = await db.query('SELECT * FROM pacientes WHERE email = ?', [email]);
         if (pacientes.length > 0) { tabla = 'pacientes'; idCampo = 'id_paciente'; usuario = pacientes[0]; }
         else {
@@ -329,27 +333,36 @@ app.post('/api/recuperar-password', async (req, res) => {
             }
         }
 
-        if (!usuario) return res.status(404).json({ error: 'No existe una cuenta con este correo.' });
+        if (!usuario) {
+            console.log("❌ Email no encontrado en ninguna tabla.");
+            return res.status(404).json({ error: 'No existe una cuenta con este correo.' });
+        }
 
+        // 2. Generar y guardar código
         const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+        console.log(`Generando código ${codigo} para ${email}`);
+        
+        // ¡OJO AQUÍ! Verifica que tus tablas tengan la columna codigo_recuperacion
         await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
 
+        // 3. Configurar envío de email
         const mailOptions = {
             from: 'SaludYa Soporte <haduconab@gmail.com>',
             to: email,
-            subject: 'Código de Recuperación de Contraseña - SaludYa',
-            html: `<div style="font-family: Arial, sans-serif; text-align: center; padding: 20px;">
-                    <h2 style="color: #004B71;">Recuperación de Contraseña</h2>
-                    <p>Hola <strong>${usuario.nombre}</strong>,</p>
-                    <p>Has solicitado restablecer tu contraseña. Tu código de seguridad es:</p>
-                    <h1 style="color: #f59e0b; font-size: 40px; letter-spacing: 5px; background: #fef3c7; padding: 10px; display: inline-block; border-radius: 8px;">${codigo}</h1>
-                    <p>Si no fuiste tú, ignora este mensaje.</p>
-                   </div>`
+            subject: 'Código de Recuperación - SaludYa',
+            text: `Tu código es: ${codigo}`
         };
 
+        console.log("Enviando correo vía Nodemailer...");
         await transporter.sendMail(mailOptions);
+        
+        console.log("✅ Correo enviado con éxito a:", email);
         res.json({ message: 'Código enviado al correo.' });
-    } catch (error) { res.status(500).json({ error: 'Error al procesar la solicitud.' }); }
+
+    } catch (error) { 
+        console.error("🚨 ERROR EN RECUPERACIÓN:", error);
+        res.status(500).json({ error: 'Error al procesar la solicitud.', detalle: error.message }); 
+    }
 });
 
 app.post('/api/reset-password', async (req, res) => {
