@@ -122,49 +122,42 @@ app.get('/api/admin/agenda-global', async (req, res) => {
 });
 
 app.post('/api/citas', async (req, res) => {
-    // 1. Ver exactamente qué llega del frontend
     console.log("--- NUEVA SOLICITUD DE CITA ---");
-    console.log("Cuerpo recibido:", JSON.stringify(req.body));
-
     const { id_paciente, id_medico, fecha_hora, motivo } = req.body;
-
-    // Validación rápida antes de tocar la DB
-    if (!id_paciente || !id_medico || !fecha_hora) {
-        console.error("❌ ERROR: Faltan datos obligatorios en el body");
-        return res.status(400).json({ error: "Faltan campos obligatorios" });
-    }
+    console.log("Datos:", { id_paciente, id_medico, fecha_hora, motivo });
 
     try {
-        console.log("Buscando especialidad del médico ID:", id_medico);
-        const [medicoInfo] = await db.query('SELECT especialidad FROM medicos WHERE id_medico = ?', [id_medico]);
-        
-        if (medicoInfo.length === 0) {
-            console.error("❌ ERROR: Médico no encontrado en la DB");
-            return res.status(404).json({ error: 'Médico no encontrado.' });
-        }
+        // 1. Verificación de horario
+        const [ocupado] = await db.query('SELECT * FROM citas WHERE id_medico = ? AND fecha_hora = ? AND estado NOT IN ("Cancelada", "Concluida")', [id_medico, fecha_hora]);
+        if (ocupado.length > 0) return res.status(400).json({ error: 'Horario ocupado' });
 
-        console.log("Insertando en la tabla citas...");
-        const queryInsert = 'INSERT INTO citas (id_paciente, id_medico, fecha_hora, motivo, estado) VALUES (?, ?, ?, ?, "Pendiente")';
-        const values = [id_paciente, id_medico, fecha_hora, motivo || 'Consulta'];
+        // 2. Obtener especialidad
+        const [medicoInfo] = await db.query('SELECT especialidad FROM medicos WHERE id_medico = ?', [id_medico]);
+        if (medicoInfo.length === 0) return res.status(404).json({ error: 'Médico no encontrado.' });
         
-        await db.query(queryInsert, values);
+        const especialidad = medicoInfo[0].especialidad;
+
+        // 3. Verificar cita duplicada para esa especialidad
+        const [duplicada] = await db.query(`
+            SELECT c.id_cita FROM citas c
+            JOIN medicos m ON c.id_medico = m.id_medico
+            WHERE c.id_paciente = ? AND m.especialidad = ? AND c.estado NOT IN ("Cancelada", "Concluida")
+        `, [id_paciente, especialidad]);
+
+        if (duplicada.length > 0) return res.status(400).json({ error: `Ya tienes una cita activa para ${especialidad}.` });
+
+        // 4. INSERCIÓN CORREGIDA (Pasamos "Pendiente" como parámetro ?)
+        const sql = 'INSERT INTO citas (id_paciente, id_medico, fecha_hora, motivo, estado) VALUES (?, ?, ?, ?, ?)';
+        const valores = [id_paciente, id_medico, fecha_hora, motivo || 'Consulta General', 'Pendiente'];
+        
+        await db.query(sql, valores);
         
         console.log("✅ CITA GUARDADA CON ÉXITO");
         res.status(201).json({ message: 'Cita agendada' });
 
     } catch (error) {
-        // ESTO SÍ O SÍ TIENE QUE SALIR EN RENDER
-        console.error("***************************************");
-        console.error("🚨 ERROR CRÍTICO EN MYSQL:");
-        console.error("Código:", error.code);
-        console.error("Mensaje:", error.message);
-        console.error("SQL State:", error.sqlState);
-        console.error("***************************************");
-        
-        res.status(500).json({ 
-            error: 'Error interno del servidor', 
-            detalle: error.message 
-        });
+        console.error("🚨 ERROR CRÍTICO EN MYSQL:", error);
+        res.status(500).json({ error: 'Error al agendar', detalle: error.message });
     }
 });
 
