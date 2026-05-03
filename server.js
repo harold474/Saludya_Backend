@@ -35,7 +35,7 @@ const inicializarAdmin = async () => {
             console.log("✅ Super Administrador creado automáticamente.");
         }
     } catch (error) {
-        console.log("Nota: No se pudo auto-crear el admin.");
+        console.error("❌ Error al auto-crear admin:", error.message);
     }
 };
 inicializarAdmin();
@@ -56,7 +56,6 @@ app.get('/api/medicos', async (req, res) => {
             return res.json({ data: rows, totalPaginas: Math.ceil(total / limit) });
         }
         
-        // Si no hay página, es el paciente pidiendo la lista de médicos para agendar (Solo activos)
         const [rows] = await db.query("SELECT id_medico, nombre, especialidad, email FROM medicos WHERE estado = 'Activo' OR estado IS NULL");
         res.json(rows);
     } catch (error) {
@@ -124,6 +123,8 @@ app.get('/api/admin/agenda-global', async (req, res) => {
 
 app.post('/api/citas', async (req, res) => {
     const { id_paciente, id_medico, fecha_hora, motivo } = req.body; 
+    console.log("Intentando agendar cita:", { id_paciente, id_medico, fecha_hora, motivo });
+
     try {
         const [ocupado] = await db.query('SELECT * FROM citas WHERE id_medico = ? AND fecha_hora = ? AND estado NOT IN ("Cancelada", "Concluida")', [id_medico, fecha_hora]);
         if (ocupado.length > 0) return res.status(400).json({ error: 'Horario ocupado' });
@@ -141,8 +142,12 @@ app.post('/api/citas', async (req, res) => {
         if (duplicada.length > 0) return res.status(400).json({ error: `Ya tienes una cita activa para ${especialidad}.` });
 
         await db.query('INSERT INTO citas (id_paciente, id_medico, fecha_hora, motivo, estado) VALUES (?, ?, ?, ?, "Pendiente")', [id_paciente, id_medico, fecha_hora, motivo]);
+        console.log("✅ Cita agendada correctamente");
         res.status(201).json({ message: 'Cita agendada' });
-    } catch (error) { res.status(500).json({ error: 'Error al agendar' }); }
+    } catch (error) { 
+        console.error("❌ ERROR DETALLADO AL AGENDAR:", error);
+        res.status(500).json({ error: 'Error al agendar', detalle: error.message }); 
+    }
 });
 
 app.get('/api/pacientes/:id_paciente/citas', async (req, res) => {
@@ -210,7 +215,6 @@ app.post('/api/login', async (req, res) => {
         let passValida = (password === '123456' && user.password.includes('wT2H.L9s9u5i')) || await bcrypt.compare(password, user.password);
         if (!passValida) return res.status(401).json({ error: 'Contraseña incorrecta' });
 
-        // Bloqueo si el usuario fue inhabilitado por el Admin
         if (user.estado === 'Inactivo') return res.status(403).json({ error: 'Tu cuenta ha sido suspendida. Contacta a soporte.' });
 
         const idUsuario = user.id_admin || user.id_paciente || user.id_medico;
@@ -219,7 +223,6 @@ app.post('/api/login', async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Error login' }); }
 });
 
-// 🛡️ Registro de Personal (Bloqueo de duplicados global)
 app.post('/api/admin/registro-personal', async (req, res) => {
     const { nombre, especialidad, email, password, rol } = req.body;
     try {
@@ -242,7 +245,6 @@ app.post('/api/admin/registro-personal', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Error interno' }); }
 });
 
-// 🛡️ Registro de Pacientes (Bloqueo de duplicados)
 app.post('/api/registro', async (req, res) => {
     const { nombre, documento, email, telefono, password } = req.body;
     try {
