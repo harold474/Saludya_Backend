@@ -10,6 +10,13 @@ const app = express();
 app.use(cors()); 
 app.use(express.json()); 
 
+// ==========================================
+// 🌐 RUTA RAÍZ (Soluciona el error "Cannot GET /")
+// ==========================================
+app.get('/', (req, res) => {
+    res.send('¡El backend de SaludYa está funcionando perfectamente! 🚀');
+});
+
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secreto_saludya_123';
 
 // ==========================================
