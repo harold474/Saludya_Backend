@@ -179,19 +179,40 @@ app.get('/api/pacientes/:id_paciente/citas', async (req, res) => {
 });
 
 app.put('/api/citas/:id', async (req, res) => {
+    const { id } = req.params;
     const { estado, fecha_hora } = req.body;
+    
+    console.log(`--- INTENTO DE ACTUALIZACIÓN CITA ${id} ---`);
+    console.log("Datos recibidos:", { estado, fecha_hora });
+
     try {
         if (fecha_hora) {
-            const [check] = await db.query('SELECT estado FROM citas WHERE id_cita = ?', [req.params.id]);
-            if (check[0].estado === 'Concluida' || check[0].estado === 'Cancelada') {
-                return res.status(400).json({ error: 'No se puede reprogramar cita cerrada.' });
+            // 1. Verificamos el estado actual con comillas simples corregidas
+            const [check] = await db.query("SELECT estado FROM citas WHERE id_cita = ?", [id]);
+            
+            if (check.length === 0) return res.status(404).json({ error: 'Cita no encontrada' });
+
+            const estadoActual = check[0].estado;
+            if (estadoActual === 'Concluida' || estadoActual === 'Cancelada') {
+                return res.status(400).json({ error: 'No se puede reprogramar una cita ya cerrada o cancelada.' });
             }
-            await db.query('UPDATE citas SET fecha_hora = ?, estado = "Pendiente" WHERE id_cita = ?', [fecha_hora, req.params.id]);
+
+            // 2. Actualizamos fecha y reseteamos a Pendiente
+            await db.query("UPDATE citas SET fecha_hora = ?, estado = 'Pendiente' WHERE id_cita = ?", [fecha_hora, id]);
+            console.log("✅ Cita reprogramada con éxito");
+            
         } else {
-            await db.query('UPDATE citas SET estado = ? WHERE id_cita = ?', [estado, req.params.id]);
+            // 3. Si solo se actualiza el estado (ej: de Pendiente a Cancelada)
+            await db.query("UPDATE citas SET estado = ? WHERE id_cita = ?", [estado, id]);
+            console.log(`✅ Estado de cita ${id} cambiado a ${estado}`);
         }
+        
         res.json({ message: 'Ok' });
-    } catch (e) { res.status(500).json({ error: 'Error update' }); }
+
+    } catch (error) {
+        console.error("🚨 ERROR CRÍTICO EN UPDATE:", error);
+        res.status(500).json({ error: 'Error update', detalle: error.message });
+    }
 });
 
 app.get('/api/citas/ocupadas', async (req, res) => {
