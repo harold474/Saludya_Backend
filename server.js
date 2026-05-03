@@ -315,13 +315,12 @@ const transporter = nodemailer.createTransport({
 
 app.post('/api/recuperar-password', async (req, res) => {
     const { email } = req.body;
-    console.log("--- SOLICITUD DE RECUPERACIÓN ---");
-    console.log("Email recibido:", email);
+    console.log("--- SOLICITUD DE RECUPERACIÓN INICIADA ---");
+    console.log("Paso 1: Buscando email:", email);
 
     try {
         let tabla = null; let idCampo = null; let usuario = null;
 
-        // 1. Buscar en todas las tablas
         const [pacientes] = await db.query('SELECT * FROM pacientes WHERE email = ?', [email]);
         if (pacientes.length > 0) { tabla = 'pacientes'; idCampo = 'id_paciente'; usuario = pacientes[0]; }
         else {
@@ -334,18 +333,19 @@ app.post('/api/recuperar-password', async (req, res) => {
         }
 
         if (!usuario) {
-            console.log("❌ Email no encontrado en ninguna tabla.");
+            console.log("❌ Resultado: Email no encontrado en ninguna tabla.");
             return res.status(404).json({ error: 'No existe una cuenta con este correo.' });
         }
 
-        // 2. Generar y guardar código
+        console.log(`Paso 2: Usuario encontrado en la tabla ${tabla}. Generando código...`);
         const codigo = Math.floor(100000 + Math.random() * 900000).toString();
-        console.log(`Generando código ${codigo} para ${email}`);
         
-        // ¡OJO AQUÍ! Verifica que tus tablas tengan la columna codigo_recuperacion
+        console.log(`Paso 3: Intentando guardar el código ${codigo} en la Base de Datos...`);
+        // Si falla aquí, el problema es que la columna aún no está bien o hay un error SQL
         await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
+        console.log("✅ Código guardado exitosamente en la BD.");
 
-        // 3. Configurar envío de email
+        console.log("Paso 4: Configurando Nodemailer para enviar el correo...");
         const mailOptions = {
             from: 'SaludYa Soporte <haduconab@gmail.com>',
             to: email,
@@ -353,15 +353,18 @@ app.post('/api/recuperar-password', async (req, res) => {
             text: `Tu código es: ${codigo}`
         };
 
-        console.log("Enviando correo vía Nodemailer...");
+        // Si falla aquí, Gmail o Render están bloqueando el envío
         await transporter.sendMail(mailOptions);
-        
         console.log("✅ Correo enviado con éxito a:", email);
+        
         res.json({ message: 'Código enviado al correo.' });
 
     } catch (error) { 
-        console.error("🚨 ERROR EN RECUPERACIÓN:", error);
-        res.status(500).json({ error: 'Error al procesar la solicitud.', detalle: error.message }); 
+        console.error("🚨 ¡CRASH! ERROR EXACTO EN RECUPERACIÓN:", error);
+        res.status(500).json({ 
+            error: 'Error al procesar la solicitud.', 
+            detalle: error.message 
+        }); 
     }
 });
 
