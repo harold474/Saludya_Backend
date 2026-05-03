@@ -307,14 +307,17 @@ const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // Fuerza la conexión segura que pide Render y Gmail
+    port: 587,
+    secure: false, // Para el puerto 587 debe ser false
     auth: {
         user: 'haduconab@gmail.com', 
-        pass: process.env.EMAIL_PASS || 'mpow kfgh vodr blaz' // Ojo: ¡Recuerda poner esto en las variables de Render luego!
+        pass: process.env.EMAIL_PASS || 'mpow kfgh vodr blaz' 
     },
-    logger: true, // Muestra en consola qué está haciendo Nodemailer
-    debug: true   // Muestra toda la charla entre tu servidor y Gmail
+    tls: {
+        rejectUnauthorized: false // Esto ayuda a que Render no bloquee la conexión
+    },
+    logger: true,
+    debug: true 
 });
 
 app.post('/api/recuperar-password', async (req, res) => {
