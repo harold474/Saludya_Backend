@@ -10,7 +10,7 @@ let defaultClient = SibApiV3Sdk.ApiClient.instance;
 
 
 let apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = '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';
+apiKey.apiKey = process.env.BREVO_API_KEY;
 
 const app = express();
 app.use(cors()); 
