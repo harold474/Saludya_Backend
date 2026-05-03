@@ -4,6 +4,8 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const db = require('./db'); 
+const { Resend } = require('resend');
+const resend = new Resend('re_KgvqmKnN_DCJDJB3pnFP75Zy8ExiXSg5T');
 console.log("Intentando conectar al host:", process.env.DB_HOST);
 
 const app = express();
@@ -303,22 +305,7 @@ app.post('/api/registro', async (req, res) => {
 // ==========================================
 // ✉️ RECUPERACIÓN DE CONTRASEÑA (NODEMAILER)
 // ==========================================
-const nodemailer = require('nodemailer');
 
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: 'haduconab@gmail.com',
-        pass: 'mpow kfgh vodr blaz'
-    },
-    // Esto es vital: obliga a usar IPv4 porque Render a veces se lía con IPv6
-    // y añade una rotación de conexión
-    pool: true, 
-    port: 465,
-    secure: true,
-    socketTimeout: 5000,
-    connectionTimeout: 5000
-});
 
 app.post('/api/recuperar-password', async (req, res) => {
     const { email } = req.body;
@@ -352,18 +339,23 @@ app.post('/api/recuperar-password', async (req, res) => {
         await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
         console.log("✅ Código guardado exitosamente en la BD.");
 
-        console.log("Paso 4: Configurando Nodemailer para enviar el correo...");
-        const mailOptions = {
-            from: 'SaludYa Soporte <haduconab@gmail.com>',
+       console.log("Paso 4: Enviando correo vía Resend API...");
+        
+        await resend.emails.send({
+            from: 'SaludYa <onboarding@resend.dev>',
             to: email,
             subject: 'Código de Recuperación - SaludYa',
-            text: `Tu código es: ${codigo}`
-        };
+            html: `
+                <div style="font-family: sans-serif; padding: 20px;">
+                    <h2 style="color: #004B71;">Recuperación de Contraseña</h2>
+                    <p>Tu código de seguridad para acceder a SaludYa es:</p>
+                    <h1 style="background: #f4f4f4; padding: 10px; text-align: center; letter-spacing: 5px;">${codigo}</h1>
+                    <p>Si no solicitaste este código, puedes ignorar este mensaje.</p>
+                </div>
+            `
+        });
 
-        // Si falla aquí, Gmail o Render están bloqueando el envío
-        await transporter.sendMail(mailOptions);
         console.log("✅ Correo enviado con éxito a:", email);
-        
         res.json({ message: 'Código enviado al correo.' });
 
     } catch (error) { 
