@@ -315,6 +315,7 @@ app.post('/api/recuperar-password', async (req, res) => {
     try {
         let tabla = null; let idCampo = null; let usuario = null;
 
+        // 1. Buscamos en las 3 tablas
         const [pacientes] = await db.query('SELECT * FROM pacientes WHERE email = ?', [email]);
         if (pacientes.length > 0) { tabla = 'pacientes'; idCampo = 'id_paciente'; usuario = pacientes[0]; }
         else {
@@ -331,26 +332,33 @@ app.post('/api/recuperar-password', async (req, res) => {
             return res.status(404).json({ error: 'No existe una cuenta con este correo.' });
         }
 
+        // 2. Generamos el código de 6 dígitos
         console.log(`Paso 2: Usuario encontrado en la tabla ${tabla}. Generando código...`);
         const codigo = Math.floor(100000 + Math.random() * 900000).toString();
         
+        // 3. Guardamos en la Base de Datos
         console.log(`Paso 3: Intentando guardar el código ${codigo} en la Base de Datos...`);
-        // Si falla aquí, el problema es que la columna aún no está bien o hay un error SQL
         await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
         console.log("✅ Código guardado exitosamente en la BD.");
 
-       console.log("Paso 4: Enviando correo vía Resend API...");
+        // 4. Enviamos por Resend
+        console.log("Paso 4: Enviando correo vía Resend API...");
         
         await resend.emails.send({
-            from: 'SaludYa <onboarding@resend.dev>',
+            from: 'SaludYa <onboarding@resend.dev>', // Asegúrate de que este sea el remitente de prueba de Resend
             to: email,
             subject: 'Código de Recuperación - SaludYa',
             html: `
-                <div style="font-family: sans-serif; padding: 20px;">
-                    <h2 style="color: #004B71;">Recuperación de Contraseña</h2>
+                <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: auto;">
+                    <h2 style="color: #004B71; text-align: center;">Recuperación de Contraseña</h2>
+                    <p>Hola, <strong>${usuario.nombre}</strong>.</p>
                     <p>Tu código de seguridad para acceder a SaludYa es:</p>
-                    <h1 style="background: #f4f4f4; padding: 10px; text-align: center; letter-spacing: 5px;">${codigo}</h1>
-                    <p>Si no solicitaste este código, puedes ignorar este mensaje.</p>
+                    <div style="background: #f4f4f4; padding: 20px; text-align: center; font-size: 30px; font-weight: bold; letter-spacing: 10px; color: #004B71; border-radius: 5px;">
+                        ${codigo}
+                    </div>
+                    <p style="font-size: 12px; color: #777; margin-top: 20px; text-align: center;">
+                        Si no solicitaste este código, puedes ignorar este mensaje de forma segura.
+                    </p>
                 </div>
             `
         });
