@@ -124,11 +124,12 @@ app.get('/api/admin/agenda-global', async (req, res) => {
 app.post('/api/citas', async (req, res) => {
     console.log("--- NUEVA SOLICITUD DE CITA ---");
     const { id_paciente, id_medico, fecha_hora, motivo } = req.body;
-    console.log("Datos:", { id_paciente, id_medico, fecha_hora, motivo });
 
     try {
-        // 1. Verificación de horario
-        const [ocupado] = await db.query('SELECT * FROM citas WHERE id_medico = ? AND fecha_hora = ? AND estado NOT IN ("Cancelada", "Concluida")', [id_medico, fecha_hora]);
+        // 1. Verificación de horario (CORREGIDA con comillas simples)
+        const sqlOcupado = "SELECT * FROM citas WHERE id_medico = ? AND fecha_hora = ? AND estado NOT IN ('Cancelada', 'Concluida')";
+        const [ocupado] = await db.query(sqlOcupado, [id_medico, fecha_hora]);
+        
         if (ocupado.length > 0) return res.status(400).json({ error: 'Horario ocupado' });
 
         // 2. Obtener especialidad
@@ -137,20 +138,21 @@ app.post('/api/citas', async (req, res) => {
         
         const especialidad = medicoInfo[0].especialidad;
 
-        // 3. Verificar cita duplicada para esa especialidad
-        const [duplicada] = await db.query(`
+        // 3. Verificar cita duplicada (CORREGIDA con comillas simples)
+        const sqlDuplicada = `
             SELECT c.id_cita FROM citas c
             JOIN medicos m ON c.id_medico = m.id_medico
-            WHERE c.id_paciente = ? AND m.especialidad = ? AND c.estado NOT IN ("Cancelada", "Concluida")
-        `, [id_paciente, especialidad]);
+            WHERE c.id_paciente = ? AND m.especialidad = ? AND c.estado NOT IN ('Cancelada', 'Concluida')
+        `;
+        const [duplicada] = await db.query(sqlDuplicada, [id_paciente, especialidad]);
 
         if (duplicada.length > 0) return res.status(400).json({ error: `Ya tienes una cita activa para ${especialidad}.` });
 
-        // 4. INSERCIÓN CORREGIDA (Pasamos "Pendiente" como parámetro ?)
-        const sql = 'INSERT INTO citas (id_paciente, id_medico, fecha_hora, motivo, estado) VALUES (?, ?, ?, ?, ?)';
+        // 4. INSERCIÓN BLINDADA
+        const sqlInsert = 'INSERT INTO citas (id_paciente, id_medico, fecha_hora, motivo, estado) VALUES (?, ?, ?, ?, ?)';
         const valores = [id_paciente, id_medico, fecha_hora, motivo || 'Consulta General', 'Pendiente'];
         
-        await db.query(sql, valores);
+        await db.query(sqlInsert, valores);
         
         console.log("✅ CITA GUARDADA CON ÉXITO");
         res.status(201).json({ message: 'Cita agendada' });
