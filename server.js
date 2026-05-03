@@ -345,7 +345,7 @@ app.post('/api/recuperar-password', async (req, res) => {
         await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
         console.log("✅ Código guardado exitosamente en la BD.");
 
-        // 4. Enviamos por Resend
+        // 4. Enviamos 
        console.log("Paso 4: Enviando correo vía Brevo API...");
         
         const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
