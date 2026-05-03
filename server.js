@@ -4,13 +4,15 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const db = require('./db'); 
-const { TransactionalEmailsApi, ApiClient, SendSmtpEmail } = require('@getbrevo/brevo');
 
+// === CONFIGURACIÓN DE BREVO (ESTABLE) ===
+const { TransactionalEmailsApi, ApiClient, SendSmtpEmail } = require('@getbrevo/brevo');
 const defaultClient = ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY;
-
+apiKey.apiKey = process.env.BREVO_API_KEY; // Se usa la variable de entorno para evitar bloqueos de GitHub
 const apiInstance = new TransactionalEmailsApi();
+
+console.log("Intentando conectar al host:", process.env.DB_HOST);
 
 const app = express();
 app.use(cors()); 
@@ -132,19 +134,16 @@ app.post('/api/citas', async (req, res) => {
     const { id_paciente, id_medico, fecha_hora, motivo } = req.body;
 
     try {
-        // 1. Verificación de horario (CORREGIDA con comillas simples)
         const sqlOcupado = "SELECT * FROM citas WHERE id_medico = ? AND fecha_hora = ? AND estado NOT IN ('Cancelada', 'Concluida')";
         const [ocupado] = await db.query(sqlOcupado, [id_medico, fecha_hora]);
         
         if (ocupado.length > 0) return res.status(400).json({ error: 'Horario ocupado' });
 
-        // 2. Obtener especialidad
         const [medicoInfo] = await db.query('SELECT especialidad FROM medicos WHERE id_medico = ?', [id_medico]);
         if (medicoInfo.length === 0) return res.status(404).json({ error: 'Médico no encontrado.' });
         
         const especialidad = medicoInfo[0].especialidad;
 
-        // 3. Verificar cita duplicada (CORREGIDA con comillas simples)
         const sqlDuplicada = `
             SELECT c.id_cita FROM citas c
             JOIN medicos m ON c.id_medico = m.id_medico
@@ -154,7 +153,6 @@ app.post('/api/citas', async (req, res) => {
 
         if (duplicada.length > 0) return res.status(400).json({ error: `Ya tienes una cita activa para ${especialidad}.` });
 
-        // 4. INSERCIÓN BLINDADA
         const sqlInsert = 'INSERT INTO citas (id_paciente, id_medico, fecha_hora, motivo, estado) VALUES (?, ?, ?, ?, ?)';
         const valores = [id_paciente, id_medico, fecha_hora, motivo || 'Consulta General', 'Pendiente'];
         
@@ -193,7 +191,6 @@ app.put('/api/citas/:id', async (req, res) => {
 
     try {
         if (fecha_hora) {
-            // 1. Verificamos el estado actual con comillas simples corregidas
             const [check] = await db.query("SELECT estado FROM citas WHERE id_cita = ?", [id]);
             
             if (check.length === 0) return res.status(404).json({ error: 'Cita no encontrada' });
@@ -203,12 +200,10 @@ app.put('/api/citas/:id', async (req, res) => {
                 return res.status(400).json({ error: 'No se puede reprogramar una cita ya cerrada o cancelada.' });
             }
 
-            // 2. Actualizamos fecha y reseteamos a Pendiente
             await db.query("UPDATE citas SET fecha_hora = ?, estado = 'Pendiente' WHERE id_cita = ?", [fecha_hora, id]);
             console.log("✅ Cita reprogramada con éxito");
             
         } else {
-            // 3. Si solo se actualiza el estado (ej: de Pendiente a Cancelada)
             await db.query("UPDATE citas SET estado = ? WHERE id_cita = ?", [estado, id]);
             console.log(`✅ Estado de cita ${id} cambiado a ${estado}`);
         }
@@ -307,9 +302,8 @@ app.post('/api/registro', async (req, res) => {
 });
 
 // ==========================================
-// ✉️ RECUPERACIÓN DE CONTRASEÑA (NODEMAILER)
+// ✉️ RECUPERACIÓN DE CONTRASEÑA (BREVO API)
 // ==========================================
-
 
 app.post('/api/recuperar-password', async (req, res) => {
     const { email } = req.body;
@@ -319,7 +313,6 @@ app.post('/api/recuperar-password', async (req, res) => {
     try {
         let tabla = null; let idCampo = null; let usuario = null;
 
-        // 1. Buscamos en las 3 tablas
         const [pacientes] = await db.query('SELECT * FROM pacientes WHERE email = ?', [email]);
         if (pacientes.length > 0) { tabla = 'pacientes'; idCampo = 'id_paciente'; usuario = pacientes[0]; }
         else {
@@ -336,19 +329,15 @@ app.post('/api/recuperar-password', async (req, res) => {
             return res.status(404).json({ error: 'No existe una cuenta con este correo.' });
         }
 
-        // 2. Generamos el código de 6 dígitos
         console.log(`Paso 2: Usuario encontrado en la tabla ${tabla}. Generando código...`);
         const codigo = Math.floor(100000 + Math.random() * 900000).toString();
         
-        // 3. Guardamos en la Base de Datos
         console.log(`Paso 3: Intentando guardar el código ${codigo} en la Base de Datos...`);
         await db.query(`UPDATE ${tabla} SET codigo_recuperacion = ? WHERE ${idCampo} = ?`, [codigo, usuario[idCampo]]);
         console.log("✅ Código guardado exitosamente en la BD.");
 
-        // 4. Enviamos 
-       console.log("Paso 4: Enviando correo vía Brevo API...");
+        console.log("Paso 4: Enviando correo vía Brevo API...");
         
-        // Fíjate que ahora no usamos SibApiV3Sdk. adelante
         const sendSmtpEmail = new SendSmtpEmail(); 
         
         sendSmtpEmail.subject = "Código de Recuperación - SaludYa";
