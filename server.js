@@ -306,21 +306,18 @@ app.post('/api/registro', async (req, res) => {
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // Volvemos al 465 pero con un ajuste de seguridad
+    service: 'gmail',
     auth: {
-        user: 'haduconab@gmail.com', 
-        pass: 'mpow kfgh vodr blaz' 
+        user: 'haduconab@gmail.com',
+        pass: 'mpow kfgh vodr blaz'
     },
-    tls: {
-        // Esta línea es la clave: evita que la conexión se caiga si el handshake tarda
-        rejectUnauthorized: false,
-        minVersion: 'TLSv1.2'
-    },
-    connectionTimeout: 20000, // Le damos 20 segundos para que no se desespere
-    greetingTimeout: 20000,
-    socketTimeout: 20000
+    // Esto es vital: obliga a usar IPv4 porque Render a veces se lía con IPv6
+    // y añade una rotación de conexión
+    pool: true, 
+    port: 465,
+    secure: true,
+    socketTimeout: 5000,
+    connectionTimeout: 5000
 });
 
 app.post('/api/recuperar-password', async (req, res) => {
