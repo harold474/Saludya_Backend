@@ -4,9 +4,13 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const db = require('./db'); 
-const { Resend } = require('resend');
-const resend = new Resend('re_KgvqmKnN_DCJDJB3pnFP75Zy8ExiXSg5T');
-console.log("Intentando conectar al host:", process.env.DB_HOST);
+const SibApiV3Sdk = require('@getbrevo/brevo');
+let apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+let defaultClient = SibApiV3Sdk.ApiClient.instance;
+
+
+let apiKey = defaultClient.authentications['api-key'];
+apiKey.apiKey = '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';
 
 const app = express();
 app.use(cors()); 
@@ -342,26 +346,29 @@ app.post('/api/recuperar-password', async (req, res) => {
         console.log("✅ Código guardado exitosamente en la BD.");
 
         // 4. Enviamos por Resend
-        console.log("Paso 4: Enviando correo vía Resend API...");
+       console.log("Paso 4: Enviando correo vía Brevo API...");
         
-        await resend.emails.send({
-            from: 'SaludYa <onboarding@resend.dev>', // Asegúrate de que este sea el remitente de prueba de Resend
-            to: email,
-            subject: 'Código de Recuperación - SaludYa',
-            html: `
-                <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: auto;">
-                    <h2 style="color: #004B71; text-align: center;">Recuperación de Contraseña</h2>
-                    <p>Hola, <strong>${usuario.nombre}</strong>.</p>
-                    <p>Tu código de seguridad para acceder a SaludYa es:</p>
-                    <div style="background: #f4f4f4; padding: 20px; text-align: center; font-size: 30px; font-weight: bold; letter-spacing: 10px; color: #004B71; border-radius: 5px;">
-                        ${codigo}
-                    </div>
-                    <p style="font-size: 12px; color: #777; margin-top: 20px; text-align: center;">
-                        Si no solicitaste este código, puedes ignorar este mensaje de forma segura.
-                    </p>
+        const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+        sendSmtpEmail.subject = "Código de Recuperación - SaludYa";
+        sendSmtpEmail.htmlContent = `
+            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #ddd; border-radius: 10px; max-width: 500px; margin: auto;">
+                <h2 style="color: #004B71; text-align: center;">Recuperación de Contraseña</h2>
+                <p>Hola,</p>
+                <p>Has solicitado restablecer tu contraseña en <strong>SaludYa</strong>. Tu código de seguridad es:</p>
+                <div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #004B71; border-radius: 5px; margin: 20px 0;">
+                    ${codigo}
                 </div>
-            `
-        });
+                <p style="font-size: 12px; color: #777; text-align: center;">Si no solicitaste este cambio, ignora este correo.</p>
+            </div>`;
+        
+        // Importante: El email del 'sender' debe ser el mismo que registraste en Brevo
+        sendSmtpEmail.sender = { "name": "SaludYa Soporte", "email": "luchinbackup@gmail.com" };
+        sendSmtpEmail.to = [{ "email": email }];
+
+        await apiInstance.sendTransacEmail(sendSmtpEmail);
+
+        console.log("✅ Correo enviado con éxito vía Brevo a:", email);
+        res.json({ message: 'Código enviado al correo.' });
 
         console.log("✅ Correo enviado con éxito a:", email);
         res.json({ message: 'Código enviado al correo.' });
