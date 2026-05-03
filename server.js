@@ -306,11 +306,15 @@ app.post('/api/registro', async (req, res) => {
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // Fuerza la conexión segura que pide Render y Gmail
     auth: {
         user: 'haduconab@gmail.com', 
-        pass: 'mpow kfgh vodr blaz' 
-    }
+        pass: process.env.EMAIL_PASS || 'mpow kfgh vodr blaz' // Ojo: ¡Recuerda poner esto en las variables de Render luego!
+    },
+    logger: true, // Muestra en consola qué está haciendo Nodemailer
+    debug: true   // Muestra toda la charla entre tu servidor y Gmail
 });
 
 app.post('/api/recuperar-password', async (req, res) => {
