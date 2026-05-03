@@ -4,13 +4,13 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const db = require('./db'); 
-const SibApiV3Sdk = require('@getbrevo/brevo');
-let apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-let defaultClient = SibApiV3Sdk.ApiClient.instance;
+const { TransactionalEmailsApi, ApiClient, SendSmtpEmail } = require('@getbrevo/brevo');
 
-
-let apiKey = defaultClient.authentications['api-key'];
+const defaultClient = ApiClient.instance;
+const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY;
+
+const apiInstance = new TransactionalEmailsApi();
 
 const app = express();
 app.use(cors()); 
@@ -348,29 +348,27 @@ app.post('/api/recuperar-password', async (req, res) => {
         // 4. Enviamos 
        console.log("Paso 4: Enviando correo vía Brevo API...");
         
-        const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+        // Fíjate que ahora no usamos SibApiV3Sdk. adelante
+        const sendSmtpEmail = new SendSmtpEmail(); 
+        
         sendSmtpEmail.subject = "Código de Recuperación - SaludYa";
         sendSmtpEmail.htmlContent = `
             <div style="font-family: sans-serif; padding: 20px; border: 1px solid #ddd; border-radius: 10px; max-width: 500px; margin: auto;">
                 <h2 style="color: #004B71; text-align: center;">Recuperación de Contraseña</h2>
                 <p>Hola,</p>
-                <p>Has solicitado restablecer tu contraseña en <strong>SaludYa</strong>. Tu código de seguridad es:</p>
+                <p>Tu código de seguridad para acceder a <strong>SaludYa</strong> es:</p>
                 <div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #004B71; border-radius: 5px; margin: 20px 0;">
                     ${codigo}
                 </div>
                 <p style="font-size: 12px; color: #777; text-align: center;">Si no solicitaste este cambio, ignora este correo.</p>
             </div>`;
         
-        // Importante: El email del 'sender' debe ser el mismo que registraste en Brevo
         sendSmtpEmail.sender = { "name": "SaludYa Soporte", "email": "luchinbackup@gmail.com" };
         sendSmtpEmail.to = [{ "email": email }];
 
         await apiInstance.sendTransacEmail(sendSmtpEmail);
 
         console.log("✅ Correo enviado con éxito vía Brevo a:", email);
-        res.json({ message: 'Código enviado al correo.' });
-
-        console.log("✅ Correo enviado con éxito a:", email);
         res.json({ message: 'Código enviado al correo.' });
 
     } catch (error) { 
